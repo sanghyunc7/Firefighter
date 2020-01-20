@@ -1,0 +1,521 @@
+'INITIALIZATIONS
+;Chip Settings
+  #chip 16f887, 4
+  #config OSC = INTOSCIO
+;Defines (Constants)
+ #define LCD_IO 4
+ #define LCD_NO_RW 'Make sure RW is grounded, in write mode by default
+ #define LCD_RS PORTC.5
+ #define LCD_Enable PORTC.7
+
+ #define LCD_DB4 PORTD.4
+ #define LCD_DB5 PORTD.5
+ #define LCD_DB6 PORTD.6
+ #define LCD_DB7 PORTD.7
+
+
+dir portb out 'initialize motor chip RIGHT SIDE
+dir portc.0 out 'initialize motor chip LEFT SIDE
+dir portc.1 out
+dir portc.2 out
+dir portc.3 out
+
+
+dir porta.0 in 'front wall detection
+dim anValFront as Byte
+dim wallFront as Byte
+
+
+dir porta.1 in 'left wall detection
+dim anValLeft as Byte
+dim wallLeft as Byte
+
+
+#define lineDetection porta.3 'line detection
+dir lineDetection in
+
+#define fan porta.5 'fan initiatization
+dir fan out
+
+
+dim black as bit
+black = 1 'for line detection,
+
+dim lineCount as Byte
+lineCount = 0
+
+
+dim timeThirdRoom as Byte
+timeThirdRoom = 0
+
+
+dim y1 as Byte
+dim y2 as Byte
+dim yDelta as Byte
+dim goldilockLeft as Byte
+goldilockLeft = 8
+
+Dim roomNumber(6)
+roomNumber = "one", "two", "three", "four", "home" '1 = roomNumber(1) according to greatCowBasic,
+' roomNumber(0) returns length of array
+
+'MAIN LOOP
+do
+
+  do 'keep going backwards until it sees a white Line
+  'this is done so that after this loop is finished, the wallLeft detection can begin without inconsistencies
+  gosub goBackward
+  pause 50
+  if lineDetection = 0 then EXIT DO
+  Loop
+
+  do
+    gosub goBackward
+    gosub displayLCD 'display sensor data to the LCD
+    pause 300
+    if wallLeft > 50 then EXIT DO 'indicates an opening to the left
+  loop
+  gosub resetMotor
+
+
+  do 'as we are passing the first room, check for the flame
+    gosub goLeft
+    pause 50
+    if flameVal < 10 then gosub flameRoom1
+    if lineDetection = 0 then EXIT DO 'if we cross this line, we have finished checking for room 1
+
+  loop
+
+  'correction algorithm because our robot veers slightly to the left
+  gosub resetMotor
+  gosub rotateRight
+  pause 200
+  gosub resetMotor
+  gosub goLeft
+  pause 3000
+
+  do 'keep going until there is another opening in front of it, which indicates the end of the long hallway
+    gosub goLeft
+    pause 300
+    if wallFront > 50 then EXIT DO
+  loop
+  pause 300
+  gosub resetMotor
+
+  for count = 0 to 70 'rotate right 90 degrees
+    gosub rotateRight
+  Next
+  gosub resetMotor
+
+  ' pass room 2
+  do 'while passing room 2, check for the flame
+    gosub goLeft
+    pause 300
+    if flameVal < 10 then gosub flameRoom2
+    if wallLeft < 20 then EXIT DO 'also check for the next wall to the robot's left
+  loop
+  gosub resetMotor
+
+  do 'the robot is now in the middle of the maze, facing down another long hallway
+    gosub goForward
+    pause 300
+    if wallLeft > 50 then EXIT DO 'this indicates the entrance to area 3 (for room 3)
+  Loop
+  pause 400
+  gosub resetMotor
+
+
+  for count = 0 to 65 'rotate 90 degrees to the right
+    gosub rotateRight
+  Next
+  gosub resetMotor
+
+  do 'go backwards until it crosses the white line, which indicates that the robot entered new territory
+  gosub goBackward
+  pause 20
+  if lineDetection = 0 then EXIT DO
+  Loop
+  pause 1000
+
+  do 'keep going backwards, but now check the readings from the left wall sensor
+  gosub goBackward
+  pause 300
+  if wallLeft > 50 then EXIT DO 'this indicates that the robot has reached the far end of section 3 where there must be room 3 on its right and an open stretch on its left
+  Loop
+  gosub resetMotor
+
+  for count = 0 to 65 'rotate 90 degrees to its right
+    gosub rotateRight
+  Next
+  gosub resetMotor
+
+  if flameVal < 10 then gosub flameRoom3 'check for the flame
+
+
+  do 'if there is no flame, move out until it sees the white line again
+    gosub goLeft
+    pause 50
+    if lineDetection = 0 then EXIT DO
+  Loop
+  pause 600 'go some distance so that the robot is fully out of section 3
+  gosub resetMotor
+
+  'correction algorithm because the robot veers slightly to the left
+  gosub rotateRight
+  pause 150
+  gosub resetMotor
+  gosub goBackward
+  pause 4000
+
+  do 'once the robot got past the first opening, now check its left for an opening
+    gosub goBackward
+    pause 300
+    if wallLeft > 50 then EXIT DO
+  loop
+  pause 800
+  gosub resetMotor
+
+  'the robot is entering section 4
+  'move enough so that the wallFront sensor is in front of a wall
+  gosub goRight
+  pause 2000
+
+  do 'now keep going right until there is no wall anymore
+    gosub goRight
+    pause 100
+    if wallFront > 50 then EXIT DO
+  Loop
+  pause 500
+  gosub resetMotor
+
+  do 'go forward until the robot detects a white line, this indicates a trap ahead, and also its position in the maze
+    gosub goForward
+    pause 20
+    if lineDetection = 0 then EXIT DO
+  Loop
+  gosub resetMotor
+
+  gosub goBackward
+  pause 200
+  gosub resetMotor
+
+  do 'enter the corridor to room 4, keep going until the robot is very close to the left wall
+    gosub goLeft
+    pause 200
+    if wallLeft < 20 then EXIT DO
+  loop
+  pause 500
+  gosub resetMotor
+
+  gosub flameRoom2 'room 4 flame detection uses the same algorithm as room 2
+
+  gosub resetMotor 'end of program
+  pause 1000
+loop
+
+
+
+
+'this function is used as a diagnostic tool to determine whether the motors are turning the correct direction
+motorTest:
+    gosub resetMotor
+
+    for count = 0 to 100
+      gosub goForward
+    next
+
+    for count = 0 to 100
+      gosub goBackward
+    next
+    gosub resetMotor
+
+    for count = 0 to 100
+      gosub goLeft
+    next
+
+    for count = 0 to 100
+      gosub goRight
+    next
+Return
+
+
+'these functions are fundamental functions used to make the robot go a certain direction
+clearance:
+  pause 600
+Return
+
+
+resetMotor:
+  portc = 0
+  portb = 0
+Return
+
+
+rotateLeft:
+  portc = 10
+  portb = 5
+  pause 10
+Return
+
+
+rotateRight:
+  portc = 5
+  portb = 10
+  pause 10
+Return
+
+
+goLeft:
+  portc = 9
+  pause 10
+Return
+
+
+goRight:
+  portc = 6
+  pause 10
+Return
+
+
+goForward:
+  portb = 9
+  pause 10
+Return
+
+
+goBackward:
+  portb = 6
+  pause 10
+Return
+
+
+diagonalRightForward:
+  portc = 9
+  portb = 6
+  pause 100
+Return
+
+
+diagonalLeftForward:
+  portc = 9 'goForward
+  portb = 9 'goLeft
+  pause 100
+Return
+
+
+diagonalLeftBackward:
+  portc = 6
+  portb = 9
+  pause 100
+Return
+
+
+diagonalRightBackward:
+  portc = 6
+  portb = 6
+  pause 100
+Return
+
+
+flameRoom1:
+
+  pause 800 'go a bit for clearance
+  gosub resetMotor
+
+  do 'keep going until the robot reaches the end of the wall
+  gosub goForward
+  pause 300
+  if wallFront < 22 then EXIT DO
+  loop
+  gosub resetMotor
+
+  do 'spin slowly to the right while the fan is on
+    gosub rotateRight
+    pause 30
+    porta.5 = 1 'set fan on
+    gosub resetMotor
+    pause 270
+  Loop
+
+Return
+
+'very similar to flameRoom1 function, except the robot will spin to the left instead of going right
+flameRoom2:
+
+  gosub resetMotor
+
+  do
+  gosub goForward
+  pause 300
+  if wallFront < 22 then EXIT DO
+  loop
+  gosub resetMotor
+
+  do
+    gosub rotateLeft
+    pause 30
+    porta.5 = 1 'set fan on
+    gosub resetMotor
+    pause 270
+  Loop
+
+Return
+
+
+flameRoom3:
+ gosub resetMotor
+
+    do 'keep moving forward until the robot sees the white line, which indicates a trap ahead
+      gosub goForward
+      pause 20
+      if lineDetection = 0 then EXIT DO
+    Loop
+
+    do 'spin slowly to the left while the fan is on
+      gosub rotateLeft
+      pause 30
+      porta.5 = 1 'set fan on
+      gosub resetMotor
+      pause 270
+    Loop
+
+Return
+
+
+
+
+'a very simple wall hugging algorithm
+wallFollow:
+
+  gosub displayLCD
+  gosub goForward
+
+  pause 600
+  if wallLeft > 25 then gosub adjustLeft 'if the robot is too far from the left wall, turn left
+
+
+  if wallLeft < 21 then gosub adjustRight'if the robot is too close to the left wall, turn right
+  gosub resetMotor
+
+Return
+
+
+'a more complex wall following algorithm that works for some instances
+wallFollow2:
+  y1 = wallLeft 'initial wallLeft value
+  gosub goForward
+  pause 600
+  y2 = wallLeft'second wallLeft value
+
+  yDelta = y1 - y2 'find the difference
+
+  if yDelta > 0 then gosub adjustRight 'because the robot moved closer to the left wall, the robot needs to adjust to the right
+  if yDelta < 0 then gosub adjustLeft
+  gosub resetMotor
+
+  yDelta = wallLeft - goldilockLeft 'a new yDelta, find whether the robot's current position is optimal
+
+  if yDelta > 0 then gosub horizontalShiftLeft 'if too far, shift the robot closer to the wall
+  if yDelta < 0 then gosub horizontalShiftRight
+  gosub resetMotor
+
+Return
+
+
+adjustRight:
+  gosub rotateRight
+  pause 50
+Return
+
+
+adjustLeft:
+  gosub rotateLeft
+  pause 50
+Return
+
+
+'make the robot move sideways using Omni wheels
+horizontalShiftRight:
+  do 'keep moving until it enters the goldilockzone for the left wall
+  gosub goRight
+  yDelta = wallLeft - goldilockLeft
+  if yDelta > 0 then EXIT DO
+  loop
+
+Return
+
+
+horizontalShiftLeft:
+  do
+  gosub goLeft
+  yDelta = wallLeft - goldilockLeft
+  if yDelta < 0 then EXIT DO
+  loop
+Return
+
+
+'detect whether there is a white line on the ground
+detectLine:
+  if lineDetection = 0 then
+    cls
+    locate 0,0
+    print "true" 'print the reading to the LCD
+  else if lineDetection = 1 Then
+    cls
+    locate 0,0
+    print "false"
+  end if
+Return
+
+
+'a diagnostic tool used to output various data to the LCD, such as the wall sensor, flame sensor, and line detection
+displayLCD:
+
+   Cls
+  locate 0, 0
+  print "WF" 'wall front
+    locate 1, 0
+   print wallFront
+
+   locate 0, 4
+   print "WL" 'wall left
+   locate 1, 4
+   print wallLeft
+
+   locate 0, 8
+  print "F" 'flame
+  locate 1, 8
+  print flameVal
+
+  locate 0, 12
+  print "L" 'line detection
+  locate 1, 12
+
+Return
+
+
+sub lcd(name)
+
+  Cls
+  locate 0, 0
+  print name 'from an array, display the current room the robot is in
+
+end sub
+
+'convert analog to digital,
+'from the flame sensor and wall sensors
+Function flameVal
+  flameVal = readAD(AN2, TRUE)
+end function
+
+
+Function wallFront
+  anValFront = ReadAD(AN0,TRUE)
+  wallFront = ((6787 / (anValFront-3)) - 4) / 5 'linearize the data to be more useful
+end Function
+
+
+Function wallLeft
+  anValLeft = ReadAD(AN1,TRUE)
+  wallLeft = ((6787 / (anValLeft-3)) - 4) / 5
+end Function
